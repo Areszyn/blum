@@ -49,7 +49,7 @@ class BlumTod:
         )
         headers["Content-Length"] = str(len(data))
         url = "https://gateway.blum.codes/v1/auth/provider/PROVIDER_TELEGRAM_MINI_APP"
-        res = self.http(url, headers, data)
+        res = self.make_request(url, headers, data)
         token = res.json().get("token")
         if token is None:
             self.log(f"{merah}'token' is not found in response, check you data !!")
@@ -63,7 +63,7 @@ class BlumTod:
         url_task = "https://game-domain.blum.codes/api/v1/tasks"
         headers = self.base_headers.copy()
         headers["Authorization"] = f"Bearer {access_token}"
-        res = self.http(url_task, headers)
+        res = self.make_request(url_task, headers)
         for tasks in res.json():
             if isinstance(tasks, str):
                 self.log(f"{kuning}failed get task list !")
@@ -77,14 +77,14 @@ class BlumTod:
                     url_start = (
                         f"https://game-domain.blum.codes/api/v1/tasks/{task_id}/start"
                     )
-                    res = self.http(url_start, headers, "")
+                    res = self.make_request(url_start, headers, "")
                     if "message" in res.text:
                         continue
 
                     url_claim = (
                         f"https://game-domain.blum.codes/api/v1/tasks/{task_id}/claim"
                     )
-                    res = self.http(url_claim, headers, "")
+                    res = self.make_request(url_claim, headers, "")
                     if "message" in res.text:
                         continue
 
@@ -104,7 +104,7 @@ class BlumTod:
         url = "https://game-domain.blum.codes/api/v1/farming/claim"
         headers = self.base_headers.copy()
         headers["Authorization"] = f"Bearer {access_token}"
-        res = self.http(url, headers, "")
+        res = self.make_request(url, headers, "")
         balance = res.json().get("availableBalance", 0)
         self.log(f"{hijau}balance after claim : {putih}{balance}")
         return
@@ -114,7 +114,7 @@ class BlumTod:
         headers = self.base_headers.copy()
         headers["Authorization"] = f"Bearer {access_token}"
         while True:
-            res = self.http(url, headers)
+            res = self.make_request(url, headers)
             balance = res.json().get("availableBalance", 0)
             self.log(f"{hijau}balance : {putih}{balance}")
             if only_show_balance:
@@ -146,7 +146,7 @@ class BlumTod:
         headers = self.base_headers.copy()
         headers["Authorization"] = f"Bearer {access_token}"
         while True:
-            res = self.http(url, headers, "")
+            res = self.make_request(url, headers, "")
             end = res.json().get("endTime")
             if end is None:
                 self.countdown(3)
@@ -162,7 +162,7 @@ class BlumTod:
         url = "https://gateway.blum.codes/v1/friends/balance"
         headers = self.base_headers.copy()
         headers["Authorization"] = f"Bearer {access_token}"
-        res = self.http(url, headers)
+        res = self.make_request(url, headers)
         can_claim = res.json().get("canClaim", False)
         limit_invite = res.json().get("limitInvitation", 0)
         amount_claim = res.json().get("amountForClaim")
@@ -171,7 +171,7 @@ class BlumTod:
         self.log(f"{putih}can claim referral : {hijau}{can_claim}")
         if can_claim:
             url_claim = "https://gateway.blum.codes/v1/friends/claim"
-            res = self.http(url_claim, headers, "")
+            res = self.make_request(url_claim, headers, "")
             if res.json().get("claimBalance") is not None:
                 self.log(f"{hijau}success claim referral bonus !")
                 return
@@ -182,11 +182,11 @@ class BlumTod:
         url = "https://game-domain.blum.codes/api/v1/daily-reward?offset=-420"
         headers = self.base_headers.copy()
         headers["Authorization"] = f"Bearer {access_token}"
-        res = self.http(url, headers)
+        res = self.make_request(url, headers)
         if res.status_code == 404:
             self.log(f"{kuning}already check in today !")
             return
-        res = self.http(url, headers, "")
+        res = self.make_request(url, headers, "")
         if "ok" in res.text.lower():
             self.log(f"{hijau}success check in today !")
             return
@@ -201,7 +201,7 @@ class BlumTod:
         headers = self.base_headers.copy()
         headers["Authorization"] = f"Bearer {access_token}"
         while True:
-            res = self.http(url_balance, headers)
+            res = self.make_request(url_balance, headers)
             play = res.json().get("playPasses")
             if play is None:
                 self.log(f"{kuning}failed get game ticket !")
@@ -212,7 +212,7 @@ class BlumTod:
             for i in range(play):
                 if self.is_expired(access_token):
                     return True
-                res = self.http(url_play, headers, "")
+                res = self.make_request(url_play, headers, "")
                 game_id = res.json().get("gameId")
                 if game_id is None:
                     message = res.json().get("message", "")
@@ -227,7 +227,7 @@ class BlumTod:
                     self.countdown(30)
                     point = random.randint(self.MIN_WIN, self.MAX_WIN)
                     data = json.dumps({"gameId": game_id, "points": point})
-                    res = self.http(url_claim, headers, data)
+                    res = self.make_request(url_claim, headers, data)
                     if "OK" in res.text:
                         self.log(
                             f"{hijau}success earn {putih}{point}{hijau} from game !"
@@ -302,7 +302,7 @@ class BlumTod:
             sys.exit()
 
     def ipinfo(self):
-        res = self.http("https://ipinfo.io/json", {"content-type": "application/json"})
+        res = self.make_request("https://ipinfo.io/json", {"content-type": "application/json"})
         if res is False:
             return False
         if res.status_code != 200:
@@ -316,7 +316,7 @@ class BlumTod:
         )
         return True
 
-    def http(self, url, headers, data=None):
+    def make_request(self, url, headers, data=None):
         while True:
             try:
                 logfile = "http.log"
@@ -331,13 +331,22 @@ class BlumTod:
                     res = self.ses.post(url, headers=headers, timeout=30)
                 else:
                     res = self.ses.post(url, headers=headers, data=data, timeout=30)
+
                 open(logfile, "a", encoding="utf-8").write(res.text + "\n")
+
+                if 500 <= res.status_code < 600:
+                    res.raise_for_status()
+
                 if "<title>" in res.text:
                     self.log(f"{merah}failed fetch json response !")
                     time.sleep(2)
                     continue
 
                 return res
+
+            except requests.exceptions.HTTPError as e:
+                self.log(f"{merah}HTTP error occurred: {str(e)}")
+                time.sleep(2)
 
             except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
                 self.log(f"{merah}connection error/ connection timeout !")
