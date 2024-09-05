@@ -48,7 +48,7 @@ class BlumTod:
             },
         )
         headers["Content-Length"] = str(len(data))
-        url = "https://gateway.blum.codes/v1/auth/provider/PROVIDER_TELEGRAM_MINI_APP"
+        url = "https://user-domain.blum.codes/api/v1/auth/provider/PROVIDER_TELEGRAM_MINI_APP"
         res = self.make_request(url, headers, data)
         token = res.json().get("token")
         if token is None:
@@ -419,7 +419,7 @@ class BlumTod:
                 access_token = self.get_local_token(userid)
                 failed_fetch_token = False
                 while True:
-                    if access_token is False:
+                    if not access_token:
                         access_token = self.renew_access_token(data)
                         if access_token is False:
                             self.save_failed_token(userid, data)
