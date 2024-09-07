@@ -61,6 +61,14 @@ class BlumTod:
 
     def solve_task(self, access_token):
         url_task = "https://game-domain.blum.codes/api/v1/tasks"
+        ignore_tasks = [
+            "39391eb2-f031-4954-bd8a-e7aecbb1f192",  # wallet connect
+            "d3716390-ce5b-4c26-b82e-e45ea7eba258",  # invite task
+            "f382ec3f-089d-46de-b921-b92adfd3327a", # invite task
+            "220ee7b1-cca4-4af8-838a-2001cb42b813", # invite task
+            "5ecf9c15-d477-420b-badf-058537489524", # invite task
+            "c4e04f2e-bbf5-4e31-917b-8bfa7c4aa3aa" # invite task
+        ]
         headers = self.base_headers.copy()
         headers["Authorization"] = f"Bearer {access_token}"
         res = self.make_request(url_task, headers)
@@ -68,32 +76,41 @@ class BlumTod:
             if isinstance(tasks, str):
                 self.log(f"{kuning}failed get task list !")
                 return
-            for task in tasks.get("tasks"):
-                # print(task)
-                task_id = task.get("id")
-                task_title = task.get("title")
-                task_status = task.get("status")
-                if task_status == "NOT_STARTED":
-                    url_start = (
-                        f"https://game-domain.blum.codes/api/v1/tasks/{task_id}/start"
-                    )
-                    res = self.make_request(url_start, headers, "")
-                    if "message" in res.text:
-                        continue
+            for k in list(tasks.keys()):
+                for t in tasks.get(k):
+                    for task in t.get("tasks"):
+                        task_id = task.get("id")
+                        task_title = task.get("title")
+                        task_status = task.get("status")
+                        start_task_url = f"https://game-domain.blum.codes/api/v1/tasks/{task_id}/start"
+                        claim_task_url = f"https://game-domain.blum.codes/api/v1/tasks/{task_id}/claim"
+                        if task_id in ignore_tasks:
+                            continue
+                        if task_status == "FINISHED":
+                            self.log(
+                                f"{kuning}already complete task id {putih}{task_id} !"
+                            )
+                            continue
+                        if task_status == "READY_FOR_CLAIM":
+                            _res = self.make_request(claim_task_url, headers, "")
+                            _status = _res.json().get("status")
+                            if _status == "FINISHED":
+                                self.log(
+                                    f"{hijau}success complete task id {putih}{task_id} !"
+                                )
+                                continue
 
-                    url_claim = (
-                        f"https://game-domain.blum.codes/api/v1/tasks/{task_id}/claim"
-                    )
-                    res = self.make_request(url_claim, headers, "")
-                    if "message" in res.text:
-                        continue
-
-                    status = res.json().get("status")
-                    if status == "CLAIMED":
-                        self.log(f"{hijau}success complete task id {task_id} !")
-                        continue
-
-                self.log(f"{kuning}already complete task id {task_id} !")
+                        _res = self.make_request(start_task_url, headers, "")
+                        self.countdown(5)
+                        _status = _res.json().get("status")
+                        if _status == "STARTED":
+                            _res = self.make_request(claim_task_url, headers, "")
+                            _status = _res.json().get("status")
+                            if _status == "FINISHED":
+                                self.log(
+                                    f"{hijau}success complete task id {putih}{task_id} !"
+                                )
+                                continue
 
     def set_proxy(self, proxy=None):
         self.ses = requests.Session()
@@ -159,7 +176,7 @@ class BlumTod:
         return round(end / 1000)
 
     def get_friend(self, access_token):
-        url = "https://gateway.blum.codes/v1/friends/balance"
+        url = "https://user-domain.blum.codes/api/v1/friends/balance"
         headers = self.base_headers.copy()
         headers["Authorization"] = f"Bearer {access_token}"
         res = self.make_request(url, headers)
@@ -170,7 +187,7 @@ class BlumTod:
         self.log(f"{hijau}referral balance : {putih}{amount_claim}")
         self.log(f"{putih}can claim referral : {hijau}{can_claim}")
         if can_claim:
-            url_claim = "https://gateway.blum.codes/v1/friends/claim"
+            url_claim = "https://user-domain.blum.codes/api/v1/friends/claim"
             res = self.make_request(url_claim, headers, "")
             if res.json().get("claimBalance") is not None:
                 self.log(f"{hijau}success claim referral bonus !")
@@ -264,6 +281,8 @@ class BlumTod:
         open("tokens.json", "w").write(json.dumps(tokens, indent=4))
 
     def is_expired(self, token):
+        if token is None or isinstance(token, bool):
+            return True
         header, payload, sign = token.split(".")
         payload = b64decode(payload + "==").decode()
         jload = json.loads(payload)
@@ -421,7 +440,7 @@ class BlumTod:
                 while True:
                     if not access_token:
                         access_token = self.renew_access_token(data)
-                        if access_token is False:
+                        if not access_token:
                             self.save_failed_token(userid, data)
                             failed_fetch_token = True
                             break
