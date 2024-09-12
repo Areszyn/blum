@@ -17,3 +17,5 @@ disin
 !config.json
 !proxies.txt
 !requirements.txt
+.idea
+.venv

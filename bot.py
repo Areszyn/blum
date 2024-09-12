@@ -3,28 +3,40 @@ import sys
 import time
 import json
 import random
+from loguru import logger
+
 import requests
 import argparse
-from json import dumps as dp, loads as ld
 from datetime import datetime
 from colorama import *
-from urllib.parse import unquote, parse_qs
+from urllib.parse import parse_qs
 from base64 import b64decode
 
-init(autoreset=True)
-
-merah = Fore.LIGHTRED_EX
-putih = Fore.LIGHTWHITE_EX
-hijau = Fore.LIGHTGREEN_EX
-kuning = Fore.LIGHTYELLOW_EX
-biru = Fore.LIGHTBLUE_EX
+red = Fore.LIGHTRED_EX
+white = Fore.LIGHTWHITE_EX
+green = Fore.LIGHTGREEN_EX
+yellow = Fore.LIGHTYELLOW_EX
+blue = Fore.LIGHTBLUE_EX
 reset = Style.RESET_ALL
-hitam = Fore.LIGHTBLACK_EX
+black = Fore.LIGHTBLACK_EX
 magenta = Fore.LIGHTMAGENTA_EX
 
 
-class BlumTod:
-    def __init__(self):
+def countdown(t):
+    while t:
+        minutes, seconds = divmod(t, 60)
+        hours, minutes = divmod(minutes, 60)
+        hours = str(hours).zfill(2)
+        minutes = str(minutes).zfill(2)
+        seconds = str(seconds).zfill(2)
+        print(f"{white}waiting until {hours}:{minutes}:{seconds} ", flush=True, end="\r")
+        t -= 1
+        time.sleep(1)
+    print("                          ", flush=True, end="\r")
+
+
+class BlumBot:
+    def __init__(self, init_data, proxy=None):
         self.base_headers = {
             "accept": "application/json, text/plain, */*",
             "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 Edg/125.0.0.0",
@@ -38,13 +50,29 @@ class BlumTod:
             "accept-encoding": "gzip, deflate",
             "accept-language": "en,en-US;q=0.9",
         }
-        self.garis = putih + "~" * 50
 
-    def renew_access_token(self, tg_data):
+        self.headers = self.base_headers.copy()
+        self.ses = requests.Session()
+        self.init_data = init_data
+        self.proxy = proxy
+        self.balance = 0
+        if self.proxy:
+            self.print_ipinfo()
+            self.set_proxy()
+
+        parsed_init_data = self.parse_init_data(self.init_data)
+        self.user_info = json.loads(parsed_init_data.get("user", '{}'))
+        self.userid = self.user_info["id"]
+        self.access_token = self.get_access_token()
+        self.headers["Authorization"] = f"Bearer {self.access_token}"
+
+        logger.info(f"{green}login as : {white}{self.user_info.get('username')}, userid: {self.userid}")
+
+    def renew_access_token(self):
         headers = self.base_headers.copy()
-        data = dp(
+        data = json.dumps(
             {
-                "query": tg_data,
+                "query": self.init_data,
             },
         )
         headers["Content-Length"] = str(len(data))
@@ -52,29 +80,31 @@ class BlumTod:
         res = self.make_request(url, headers, data)
         token = res.json().get("token")
         if token is None:
-            self.log(f"{merah}'token' is not found in response, check you data !!")
-            return 0
+            logger.info(f"{red}'token' is not found in response, check you data !!")
+            return ''
 
-        access_token = token.get("access")
-        self.log(f"{hijau}success get access token ")
-        return access_token
+        self.access_token = token.get("access")
+        self.save_local_token()
 
-    def solve_task(self, access_token):
+        logger.info(f"{green}success get access token ")
+        self.headers["Authorization"] = f"Bearer {self.access_token}"
+        return self.access_token
+
+    def solve_task(self):
         url_task = "https://game-domain.blum.codes/api/v1/tasks"
         ignore_tasks = [
             "39391eb2-f031-4954-bd8a-e7aecbb1f192",  # wallet connect
             "d3716390-ce5b-4c26-b82e-e45ea7eba258",  # invite task
-            "f382ec3f-089d-46de-b921-b92adfd3327a", # invite task
-            "220ee7b1-cca4-4af8-838a-2001cb42b813", # invite task
-            "5ecf9c15-d477-420b-badf-058537489524", # invite task
-            "c4e04f2e-bbf5-4e31-917b-8bfa7c4aa3aa" # invite task
+            "f382ec3f-089d-46de-b921-b92adfd3327a",  # invite task
+            "220ee7b1-cca4-4af8-838a-2001cb42b813",  # invite task
+            "5ecf9c15-d477-420b-badf-058537489524",  # invite task
+            "c4e04f2e-bbf5-4e31-917b-8bfa7c4aa3aa"  # invite task
         ]
-        headers = self.base_headers.copy()
-        headers["Authorization"] = f"Bearer {access_token}"
-        res = self.make_request(url_task, headers)
+
+        res = self.make_request(url_task, self.headers)
         for tasks in res.json():
             if isinstance(tasks, str):
-                self.log(f"{kuning}failed get task list !")
+                logger.info(f"{yellow}failed get task list !")
                 return
             for k in list(tasks.keys()):
                 for t in tasks.get(k):
@@ -87,184 +117,183 @@ class BlumTod:
                         if task_id in ignore_tasks:
                             continue
                         if task_status == "FINISHED":
-                            self.log(
-                                f"{kuning}already complete task id {putih}{task_id} !"
+                            logger.info(
+                                f"{yellow}already complete task id {white}{task_id} !"
                             )
                             continue
                         if task_status == "READY_FOR_CLAIM":
-                            _res = self.make_request(claim_task_url, headers, "")
+                            _res = self.make_request(claim_task_url, self.headers, "")
                             _status = _res.json().get("status")
                             if _status == "FINISHED":
-                                self.log(
-                                    f"{hijau}success complete task id {putih}{task_id} !"
+                                logger.info(
+                                    f"{green}success complete task id {white}{task_id} !"
                                 )
                                 continue
 
-                        _res = self.make_request(start_task_url, headers, "")
-                        self.countdown(5)
+                        _res = self.make_request(start_task_url, self.headers, "")
+                        countdown(5)
                         _status = _res.json().get("status")
                         if _status == "STARTED":
-                            _res = self.make_request(claim_task_url, headers, "")
+                            _res = self.make_request(claim_task_url, self.headers, "")
                             _status = _res.json().get("status")
                             if _status == "FINISHED":
-                                self.log(
-                                    f"{hijau}success complete task id {putih}{task_id} !"
+                                logger.info(
+                                    f"{green}success complete task id {white}{task_id} !"
                                 )
                                 continue
 
     def set_proxy(self, proxy=None):
-        self.ses = requests.Session()
         if proxy is not None:
             self.ses.proxies.update({"http": proxy, "https": proxy})
 
-    def claim_farming(self, access_token):
+    def claim_farming(self):
         url = "https://game-domain.blum.codes/api/v1/farming/claim"
-        headers = self.base_headers.copy()
-        headers["Authorization"] = f"Bearer {access_token}"
-        res = self.make_request(url, headers, "")
+        res = self.make_request(url, self.headers, "")
         balance = res.json().get("availableBalance", 0)
-        self.log(f"{hijau}balance after claim : {putih}{balance}")
+        logger.info(f"{green}balance after claim : {white}{balance}")
         return
 
-    def get_balance(self, access_token, only_show_balance=False):
+    def get_end_farming_time(self, only_show_balance=False):
         url = "https://game-domain.blum.codes/api/v1/user/balance"
-        headers = self.base_headers.copy()
-        headers["Authorization"] = f"Bearer {access_token}"
+
+        end_farming = 0
+
         while True:
-            res = self.make_request(url, headers)
-            balance = res.json().get("availableBalance", 0)
-            self.log(f"{hijau}balance : {putih}{balance}")
+            res = self.make_request(url, self.headers)
+            self.balance = res.json().get("availableBalance", 0)
+            logger.info(f"{green}balance: {white}{self.balance}")
             if only_show_balance:
                 return
             timestamp = res.json().get("timestamp")
             if timestamp is None:
-                self.countdown(3)
+                countdown(3)
                 continue
             timestamp = round(timestamp / 1000)
             if "farming" not in res.json().keys():
                 return False, "not_started"
+
             end_farming = res.json().get("farming", {}).get("endTime")
             if end_farming is None:
-                self.countdown(3)
+                countdown(3)
                 continue
             break
+
         end_farming = round(end_farming / 1000)
         if timestamp > end_farming:
-            self.log(f"{hijau}now is time to claim farming !")
+            logger.info(f"{green}now is time to claim farming !")
             return True, end_farming
 
-        self.log(f"{kuning}not time to claim farming !")
+        logger.info(f"{yellow}not time to claim farming !")
         end_date = datetime.fromtimestamp(end_farming)
-        self.log(f"{hijau}end farming : {putih}{end_date}")
+        logger.info(f"{green}end farming : {white}{end_date}")
         return False, end_farming
 
-    def start_farming(self, access_token):
+    def get_balance(self):
+        url = "https://game-domain.blum.codes/api/v1/user/balance"
+        res = self.make_request(url, self.headers)
+        self.balance = res.json().get("availableBalance", 0)
+        logger.info(f"{green}balance: {white}{self.balance}")
+        return self.balance
+
+    def start_farming(self):
         url = "https://game-domain.blum.codes/api/v1/farming/start"
-        headers = self.base_headers.copy()
-        headers["Authorization"] = f"Bearer {access_token}"
+
         while True:
-            res = self.make_request(url, headers, "")
+            res = self.make_request(url, self.headers, "")
             end = res.json().get("endTime")
             if end is None:
-                self.countdown(3)
+                countdown(3)
                 continue
             break
 
         end_date = datetime.fromtimestamp(end / 1000)
-        self.log(f"{hijau}start farming successfully !")
-        self.log(f"{hijau}end farming : {putih}{end_date}")
+        logger.info(f"{green}start farming successfully !")
+        logger.info(f"{green}end farming : {white}{end_date}")
         return round(end / 1000)
 
-    def get_friend(self, access_token):
+    def get_friend(self):
         url = "https://user-domain.blum.codes/api/v1/friends/balance"
-        headers = self.base_headers.copy()
-        headers["Authorization"] = f"Bearer {access_token}"
-        res = self.make_request(url, headers)
+
+        res = self.make_request(url, self.headers)
         can_claim = res.json().get("canClaim", False)
         limit_invite = res.json().get("limitInvitation", 0)
         amount_claim = res.json().get("amountForClaim")
-        self.log(f"{putih}limit invitation : {hijau}{limit_invite}")
-        self.log(f"{hijau}referral balance : {putih}{amount_claim}")
-        self.log(f"{putih}can claim referral : {hijau}{can_claim}")
+        logger.info(f"{white}limit invitation : {green}{limit_invite}")
+        logger.info(f"{green}referral balance : {white}{amount_claim}")
+        logger.info(f"{white}can claim referral : {green}{can_claim}")
         if can_claim:
             url_claim = "https://user-domain.blum.codes/api/v1/friends/claim"
-            res = self.make_request(url_claim, headers, "")
+            res = self.make_request(url_claim, self.headers, "")
             if res.json().get("claimBalance") is not None:
-                self.log(f"{hijau}success claim referral bonus !")
+                logger.info(f"{green}success claim referral bonus !")
                 return
-            self.log(f"{merah}failed claim referral bonus !")
+            logger.info(f"{red}failed claim referral bonus !")
             return
 
-    def checkin(self, access_token):
+    def checkin(self):
         url = "https://game-domain.blum.codes/api/v1/daily-reward?offset=-420"
-        headers = self.base_headers.copy()
-        headers["Authorization"] = f"Bearer {access_token}"
-        res = self.make_request(url, headers)
+
+        res = self.make_request(url, self.headers)
         if res.status_code == 404:
-            self.log(f"{kuning}already check in today !")
+            logger.info(f"{yellow}already check in today !")
             return
-        res = self.make_request(url, headers, "")
+        res = self.make_request(url, self.headers, "")
         if "ok" in res.text.lower():
-            self.log(f"{hijau}success check in today !")
+            logger.info(f"{green}success check in today !")
             return
 
-        self.log(f"{merah}failed check in today !")
+        logger.info(f"{red}failed check in today !")
         return
 
-    def playgame(self, access_token):
+    def playgame(self):
         url_play = "https://game-domain.blum.codes/api/v1/game/play"
         url_claim = "https://game-domain.blum.codes/api/v1/game/claim"
         url_balance = "https://game-domain.blum.codes/api/v1/user/balance"
-        headers = self.base_headers.copy()
-        headers["Authorization"] = f"Bearer {access_token}"
+
         while True:
-            res = self.make_request(url_balance, headers)
+            res = self.make_request(url_balance, self.headers)
             play = res.json().get("playPasses")
             if play is None:
-                self.log(f"{kuning}failed get game ticket !")
+                logger.info(f"{yellow}failed get game ticket !")
                 break
-            self.log(f"{hijau}you have {putih}{play}{hijau} game ticket")
+            logger.info(f"{green}you have {white}{play}{green} game ticket")
             if play <= 0:
                 return
             for i in range(play):
-                if self.is_expired(access_token):
+                if self.is_expired(self.access_token):
                     return True
-                res = self.make_request(url_play, headers, "")
+                res = self.make_request(url_play, self.headers, "")
                 game_id = res.json().get("gameId")
                 if game_id is None:
                     message = res.json().get("message", "")
                     if message == "cannot start game":
-                        self.log(
-                            f"{kuning}{message},will be tried again in the next round."
+                        logger.info(
+                            f"{yellow}{message},will be tried again in the next round."
                         )
                         return False
-                    self.log(f"{kuning}{message}")
+                    logger.info(f"{yellow}{message}")
                     continue
                 while True:
-                    self.countdown(30)
+                    countdown(30)
                     point = random.randint(self.MIN_WIN, self.MAX_WIN)
                     data = json.dumps({"gameId": game_id, "points": point})
-                    res = self.make_request(url_claim, headers, data)
+                    res = self.make_request(url_claim, self.headers, data)
                     if "OK" in res.text:
-                        self.log(
-                            f"{hijau}success earn {putih}{point}{hijau} from game !"
+                        logger.info(
+                            f"{green}success earn {white}{point}{green} from game !"
                         )
-                        self.get_balance(access_token, only_show_balance=True)
+                        self.get_end_farming_time(only_show_balance=True)
                         break
 
                     message = res.json().get("message", "")
                     if message == "game session not finished":
                         continue
 
-                    self.log(f"{merah}failed earn {putih}{point}{merah} from game !")
+                    logger.info(f"{red}failed earn {white}{point}{red} from game !")
                     break
 
-    def data_parsing(self, data):
+    def parse_init_data(self, data):
         return {k: v[0] for k, v in parse_qs(data).items()}
-
-    def log(self, message):
-        now = datetime.now().isoformat(" ").split(".")[0]
-        print(f"{hitam}[{now}]{reset} {message}")
 
     def get_local_token(self, userid):
         if not os.path.exists("tokens.json"):
@@ -275,13 +304,13 @@ class BlumTod:
 
         return tokens[str(userid)]
 
-    def save_local_token(self, userid, token):
+    def save_local_token(self):
         tokens = json.loads(open("tokens.json", "r").read())
-        tokens[str(userid)] = token
+        tokens[str(self.userid)] = self.access_token
         open("tokens.json", "w").write(json.dumps(tokens, indent=4))
 
     def is_expired(self, token):
-        if token is None or isinstance(token, bool):
+        if not token or isinstance(token, bool):
             return True
         header, payload, sign = token.split(".")
         payload = b64decode(payload + "==").decode()
@@ -309,30 +338,40 @@ class BlumTod:
         try:
             config = json.loads(open("config.json", "r").read())
             self.AUTOTASK = config["auto_complete_task"]
+            self.JOINTRIBE = config["join_tribe"]
             self.AUTOGAME = config["auto_play_game"]
             self.DEFAULT_INTERVAL = config["interval"]
             self.MIN_WIN = config["game_point"]["low"]
             self.MAX_WIN = config["game_point"]["high"]
+            self.report_url = config["report_url"]
             if self.MIN_WIN > self.MAX_WIN:
-                self.log(f"{kuning}high value must be higher than lower value")
+                logger.info(f"{yellow}high value must be higher than lower value")
                 sys.exit()
         except json.decoder.JSONDecodeError:
-            self.log(f"{merah}failed decode config.json")
+            logger.info(f"{red}failed decode config.json")
             sys.exit()
 
-    def ipinfo(self):
-        res = self.make_request("https://ipinfo.io/json", {"content-type": "application/json"})
-        if res is False:
-            return False
-        if res.status_code != 200:
-            self.log(f"{merah}failed fetch ipinfo !")
-            return False
-        city = res.json().get("city")
-        country = res.json().get("country")
-        region = res.json().get("region")
-        self.log(
-            f"{hijau}country : {putih}{country} {hijau}region : {putih}{region} {hijau}city : {putih}{city}"
-        )
+    def print_ipinfo(self):
+        try:
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/105.0.0.0 Safari/537.36"
+            }
+            url = "https://api.ip.sb/geoip"
+            res = self.ses.get(url, headers=headers, timeout=3)
+            if res.status_code != 200:
+                logger.info(f"{red}failed fetch ipinfo !")
+                return False
+
+            res = res.json()
+            city = res.get("city")
+            country = res.get("country")
+            region = res.get("region")
+            ip = res.get("ip")
+            logger.info(
+                f"{green}ip: {ip} country : {white}{country} {green}region : {white}{region} {green}city : {white}{city}"
+            )
+        except Exception as e:
+            logger.error(f"get ipinfo failed, error: {e}!")
         return True
 
     def make_request(self, url, headers, data=None):
@@ -357,135 +396,169 @@ class BlumTod:
                     res.raise_for_status()
 
                 if "<title>" in res.text:
-                    self.log(f"{merah}failed fetch json response !")
+                    logger.info(f"{red}failed fetch json response !")
                     time.sleep(2)
                     continue
 
                 return res
 
             except requests.exceptions.HTTPError as e:
-                self.log(f"{merah}HTTP error occurred: {str(e)}")
+                logger.info(f"{red}HTTP error occurred: {str(e)}")
                 time.sleep(2)
 
             except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
-                self.log(f"{merah}connection error/ connection timeout !")
+                logger.info(f"{red}connection error/ connection timeout !")
 
             except requests.exceptions.ProxyError:
-                self.log(f"{merah}bad proxy")
+                logger.info(f"{red}bad proxy")
                 return False
 
-    def countdown(self, t):
-        while t:
-            menit, detik = divmod(t, 60)
-            jam, menit = divmod(menit, 60)
-            jam = str(jam).zfill(2)
-            menit = str(menit).zfill(2)
-            detik = str(detik).zfill(2)
-            print(f"{putih}waiting until {jam}:{menit}:{detik} ", flush=True, end="\r")
-            t -= 1
-            time.sleep(1)
-        print("                          ", flush=True, end="\r")
+    def get_tribe(self):
+        url = "https://tribe-domain.blum.codes/api/v1/tribe/my"
+        res = self.make_request(url, headers=self.headers).json()
+        chatname = res.get('chatname')
+        if chatname:
+            logger.info(f'already join tribe: {chatname}')
+        return chatname
+
+    def join_tribe(self):
+
+        if self.get_tribe():
+            return
+
+        tribe_id = random.choice(["033d5e29-445a-400d-b360-bac04bd223aa", "b372af40-6e97-4782-b70d-4fc7ea435022",
+                                  "38396b50-7b62-4e94-ac19-219247e9aa07"])
+        url = f"https://tribe-domain.blum.codes/api/v1/tribe/{tribe_id}/join"
+        res = self.make_request(url, headers=self.headers, data="")
+        logger.info(f'join tribe resutl: {res.json()} ')
+
+    def report_balance(self):
+        try:
+            balance = float(self.balance)
+            report_data = {"user_id": self.userid, "balance": balance}
+            ret = requests.post(self.report_url, json=report_data, timeout=3)
+            logger.info(f'user: {self.userid} report ret: {ret.json()}')
+        except Exception as e:
+            logger.info(f"report balance failed, error: {e}")
+
+    def get_access_token(self):
+        access_token = self.get_local_token(self.userid)
+        failed_fetch_token = False
+        while True:
+            if not access_token:
+                access_token = self.renew_access_token()
+                if not access_token:
+                    self.save_failed_token(self.userid, self.init_data)
+                    failed_fetch_token = True
+                    break
+
+            if self.is_expired(access_token):
+                logger.error(f'access token: {access_token} is expired')
+                access_token = ''
+                continue
+            break
+
+        if failed_fetch_token:
+            logger.error('fetch token failed')
+            return ''
+
+        return access_token
 
     def main(self):
-        banner = f"""
-{magenta}┏┓┳┓┏┓  ┏┓    •      {putih}BlumTod Auto Claim for {hijau}blum
-{magenta}┗┓┃┃┗┓  ┃┃┏┓┏┓┓┏┓┏╋  {hijau}Author : {putih}AkasakaID
-{magenta}┗┛┻┛┗┛  ┣┛┛ ┗┛┃┗ ┗┗  {putih}Github : {hijau}https://github.com/AkasakaID
-{magenta}              ┛      {hijau}Note : {putih}Every Action Has a Consequence
-        """
-        arg = argparse.ArgumentParser()
-        arg.add_argument(
-            "--marinkitagawa", action="store_true", help="no clear the terminal !"
-        )
-        arg.add_argument(
-            "--data", help="Custom data input (default: data.txt)", default="data.txt"
-        )
-        arg.add_argument(
-            "--proxy",
-            help="custom proxy file input (default: proxies.txt)",
-            default="proxies.txt",
-        )
-        args = arg.parse_args()
-        if not args.marinkitagawa:
-            os.system("cls" if os.name == "nt" else "clear")
+        if not self.access_token:
+            logger.error('access token is empty')
+            return
 
-        print(banner)
-        if not os.path.exists(args.data):
-            self.log(f"{merah}{args.data} not found, please input valid file name !")
-            sys.exit()
+        self.checkin()
+        self.get_friend()
 
-        datas = [i for i in open(args.data, "r").read().splitlines() if len(i) > 0]
-        proxies = [i for i in open(args.proxy).read().splitlines() if len(i) > 0]
-        use_proxy = True if len(proxies) > 0 else False
-        self.log(f"{hijau}total account : {putih}{len(datas)}")
-        self.log(f"{biru}use proxy : {putih}{use_proxy}")
-        if len(datas) <= 0:
-            self.log(f"{merah}add data account in {args.data} first")
-            sys.exit()
-        print(self.garis)
-        while True:
-            list_countdown = []
-            for no, data in enumerate(datas):
-                self.log(f"{hijau}account number - {putih}{no + 1}")
-                data_parse = self.data_parsing(data)
-                user = json.loads(data_parse["user"])
-                userid = user["id"]
-                self.log(f"{hijau}login as : {putih}{user['first_name']}")
-                if use_proxy:
-                    proxy = proxies[no % len(proxies)]
-                self.set_proxy(proxy if use_proxy else None)
-                self.ipinfo() if use_proxy else None
-                access_token = self.get_local_token(userid)
-                failed_fetch_token = False
-                while True:
-                    if not access_token:
-                        access_token = self.renew_access_token(data)
-                        if not access_token:
-                            self.save_failed_token(userid, data)
-                            failed_fetch_token = True
-                            break
-                        self.save_local_token(userid, access_token)
-                    expired = self.is_expired(access_token)
-                    if expired:
-                        access_token = False
-                        continue
-                    break
-                if failed_fetch_token:
+        if self.AUTOTASK:
+            self.solve_task()
+
+        if self.JOINTRIBE:
+            self.join_tribe()
+
+        status, end_farming_time = self.get_end_farming_time()
+        if status:
+            self.claim_farming()
+            end_farming_time = self.start_farming()
+
+        if isinstance(end_farming_time, str):
+            end_farming_time = self.start_farming()
+
+        if self.AUTOGAME:
+            while True:
+                token_expired = self.playgame()
+                if token_expired:
+                    self.renew_access_token()
                     continue
-                self.checkin(access_token)
-                self.get_friend(access_token)
-                if self.AUTOTASK:
-                    self.solve_task(access_token)
-                status, res_bal = self.get_balance(access_token)
-                if status:
-                    self.claim_farming(access_token)
-                    res_bal = self.start_farming(access_token)
-                if isinstance(res_bal, str):
-                    res_bal = self.start_farming(access_token)
-                list_countdown.append(res_bal)
-                if self.AUTOGAME:
-                    while True:
-                        result = self.playgame(access_token)
-                        if result:
-                            access_token = self.renew_access_token(data)
-                            self.save_local_token(userid, access_token)
-                            continue
-                        break
-                print(self.garis)
-                self.countdown(self.DEFAULT_INTERVAL)
-            min_countdown = min(list_countdown)
-            now = int(time.time())
-            result = min_countdown - now
-            if result <= 0:
-                continue
+                break
 
-            self.countdown(result)
+        self.report_balance()
+        countdown(self.DEFAULT_INTERVAL)
+        return end_farming_time
 
+
+def main():
+    arg = argparse.ArgumentParser()
+    arg.add_argument(
+        "--marinkitagawa", action="store_true", help="no clear the terminal !"
+    )
+    arg.add_argument(
+        "--data", help="Custom data input (default: data.txt)", default="data.txt"
+    )
+    arg.add_argument(
+        "--proxy",
+        help="custom proxy file input (default: proxies.txt)",
+        default="proxies.txt",
+    )
+
+    args = arg.parse_args()
+    if not args.marinkitagawa:
+        os.system("cls" if os.name == "nt" else "clear")
+
+    data_file = args.data
+    proxy_file = args.proxy
+
+    if not os.path.exists(args.data):
+        logger.info(f"{red}{data_file} not found, please input valid file name !")
+        sys.exit()
+
+    datas = [i for i in open(data_file, "r").read().splitlines() if len(i) > 0]
+    proxies = [i for i in open(proxy_file).read().splitlines() if len(i) > 0]
+    use_proxy = len(proxies) > 0
+
+    logger.info(f"{green}total account : {white}{len(datas)}")
+    logger.info(f"{blue}use proxy : {white}{use_proxy}")
+
+    if len(datas) <= 0:
+        logger.error(f"{red}add data account in {data_file} first")
+        sys.exit()
+
+    while True:
+        list_countdown = []
+        for no, token in enumerate(datas):
+            logger.info((f"{green}account number - {white}{no + 1}"))
+
+            proxy = None
+            if use_proxy:
+                proxy = proxies[no % len(proxies)]
+
+            app = BlumBot(token, proxy)
+            app.load_config()
+            end_time = app.main()
+            list_countdown.append(end_time)
+
+        min_countdown = min(list_countdown)
+        now = int(time.time())
+        countdown_time = min_countdown - now
+        if countdown_time <= 0:
+            continue
+        countdown(countdown_time)
+        logger.info('~' * 50)
 
 if __name__ == "__main__":
     try:
-        app = BlumTod()
-        app.load_config()
-        app.main()
+        main()
     except KeyboardInterrupt:
         sys.exit()
