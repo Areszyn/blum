@@ -56,8 +56,9 @@ class BlumBot:
         self.init_data = init_data
         self.proxy = proxy
         self.balance = 0
+        self.print_ipinfo()
+
         if self.proxy:
-            self.print_ipinfo()
             self.set_proxy()
 
         parsed_init_data = self.parse_init_data(self.init_data)
@@ -90,57 +91,66 @@ class BlumBot:
         self.headers["Authorization"] = f"Bearer {self.access_token}"
         return self.access_token
 
-    def solve_task(self):
-        url_task = "https://game-domain.blum.codes/api/v1/tasks"
+    def solve(self, task: dict):
+        headers = self.base_headers.copy()
+        headers["authorization"] = f"Bearer {self.access_token}"
         ignore_tasks = [
             "39391eb2-f031-4954-bd8a-e7aecbb1f192",  # wallet connect
             "d3716390-ce5b-4c26-b82e-e45ea7eba258",  # invite task
             "f382ec3f-089d-46de-b921-b92adfd3327a",  # invite task
             "220ee7b1-cca4-4af8-838a-2001cb42b813",  # invite task
             "5ecf9c15-d477-420b-badf-058537489524",  # invite task
-            "c4e04f2e-bbf5-4e31-917b-8bfa7c4aa3aa"  # invite task
+            "c4e04f2e-bbf5-4e31-917b-8bfa7c4aa3aa",  # invite task
         ]
+        task_id = task.get("id")
+        task_status = task.get("status")
+        start_task_url = f"https://earn-domain.blum.codes/api/v1/tasks/{task_id}/start"
+        claim_task_url = f"https://earn-domain.blum.codes/api/v1/tasks/{task_id}/claim"
+        if task_id in ignore_tasks:
+            return
+        if task_status == "FINISHED":
+            logger.info(f"already complete task id {task_id} !")
+            return
+        if task_status == "READY_FOR_CLAIM":
+            _res = self.make_request(claim_task_url, headers, "")
+            _status = _res.json().get("status")
+            if _status == "FINISHED":
+                logger.info(f"success complete task id {task_id} !")
+                return
 
-        res = self.make_request(url_task, self.headers)
+        _res = self.make_request(start_task_url, headers, "")
+        countdown(5)
+
+        _status = _res.json().get("status")
+        if _status == "STARTED":
+            _res = self.make_request(claim_task_url, headers, "")
+            _status = _res.json().get("status")
+            if _status == "FINISHED":
+                logger.info(f"success complete task id {task_id} !")
+                return
+
+    def solve_task(self):
+        url_task = "https://earn-domain.blum.codes/api/v1/tasks"
+        headers = self.base_headers.copy()
+        headers["authorization"] = f"Bearer {self.access_token}"
+        res = self.make_request(url_task, headers)
         for tasks in res.json():
             if isinstance(tasks, str):
-                logger.info(f"{yellow}failed get task list !")
+                logger.error(f"failed get task list !")
                 return
             for k in list(tasks.keys()):
+                if k != "tasks" and k != "subSections":
+                    continue
                 for t in tasks.get(k):
+                    if isinstance(t, dict):
+                        subtasks = t.get("subTasks")
+                        if subtasks is not None:
+                            for task in subtasks:
+                                self.solve(task)
+                            self.solve(t)
+                            continue
                     for task in t.get("tasks"):
-                        task_id = task.get("id")
-                        task_title = task.get("title")
-                        task_status = task.get("status")
-                        start_task_url = f"https://game-domain.blum.codes/api/v1/tasks/{task_id}/start"
-                        claim_task_url = f"https://game-domain.blum.codes/api/v1/tasks/{task_id}/claim"
-                        if task_id in ignore_tasks:
-                            continue
-                        if task_status == "FINISHED":
-                            logger.info(
-                                f"{yellow}already complete task id {white}{task_id} !"
-                            )
-                            continue
-                        if task_status == "READY_FOR_CLAIM":
-                            _res = self.make_request(claim_task_url, self.headers, "")
-                            _status = _res.json().get("status")
-                            if _status == "FINISHED":
-                                logger.info(
-                                    f"{green}success complete task id {white}{task_id} !"
-                                )
-                                continue
-
-                        _res = self.make_request(start_task_url, self.headers, "")
-                        countdown(5)
-                        _status = _res.json().get("status")
-                        if _status == "STARTED":
-                            _res = self.make_request(claim_task_url, self.headers, "")
-                            _status = _res.json().get("status")
-                            if _status == "FINISHED":
-                                logger.info(
-                                    f"{green}success complete task id {white}{task_id} !"
-                                )
-                                continue
+                        self.solve(task)
 
     def set_proxy(self, proxy=None):
         if proxy is not None:
@@ -375,7 +385,7 @@ class BlumBot:
         return True
 
     def make_request(self, url, headers, data=None):
-        while True:
+        for _ in range(10):
             try:
                 logfile = "http.log"
                 if not os.path.exists(logfile):
@@ -391,6 +401,11 @@ class BlumBot:
                     res = self.ses.post(url, headers=headers, data=data, timeout=30)
 
                 open(logfile, "a", encoding="utf-8").write(res.text + "\n")
+
+                if 'blum.codes' in url and res.status_code == 401:
+                    self.renew_access_token()
+                    time.sleep(2)
+                    continue
 
                 if 500 <= res.status_code < 600:
                     res.raise_for_status()
@@ -408,6 +423,7 @@ class BlumBot:
 
             except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
                 logger.info(f"{red}connection error/ connection timeout !")
+                time.sleep(2)
 
             except requests.exceptions.ProxyError:
                 logger.info(f"{red}bad proxy")
@@ -464,7 +480,7 @@ class BlumBot:
 
         return access_token
 
-    def main(self):
+    def run(self):
         if not self.access_token:
             logger.error('access token is empty')
             return
@@ -544,10 +560,13 @@ def main():
             if use_proxy:
                 proxy = proxies[no % len(proxies)]
 
-            app = BlumBot(token, proxy)
-            app.load_config()
-            end_time = app.main()
-            list_countdown.append(end_time)
+            try:
+                app = BlumBot(token, proxy)
+                app.load_config()
+                end_time = app.run()
+                list_countdown.append(end_time)
+            except Exception as e:
+                logger.exception(f"no: {no}, token:{token}, error: {e}")
 
         min_countdown = min(list_countdown)
         now = int(time.time())
@@ -556,6 +575,7 @@ def main():
             continue
         countdown(countdown_time)
         logger.info('~' * 50)
+
 
 if __name__ == "__main__":
     try:
