@@ -12,6 +12,7 @@ from datetime import datetime
 from colorama import *
 from urllib.parse import parse_qs
 from base64 import b64decode
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 red = Fore.LIGHTRED_EX
 white = Fore.LIGHTWHITE_EX
@@ -324,7 +325,7 @@ class BlumBot:
                     logger.info(f"{yellow}{message}")
                     continue
                 while True:
-                    countdown(30)
+                    countdown(random.randint(30, 60))
                     point = random.randint(self.MIN_WIN, self.MAX_WIN)
                     data = json.dumps({"gameId": game_id, "points": point})
                     res = self.make_request(url_claim, self.headers, data)
@@ -557,6 +558,34 @@ class BlumBot:
         return end_farming_time
 
 
+def process_token(no, token, proxies, use_proxy):
+    """
+    Process a single token.
+
+    Parameters:
+        no (int): The account number (index).
+        token (str): The token to be processed.
+        proxies (list): List of proxies to use.
+        use_proxy (bool): Flag to determine whether to use proxies.
+
+    Returns:
+        int or None: The end time returned by app.run(), or None if an exception occurs.
+    """
+    logger.info(f"{green}Account number - {white}{no + 1}")
+    proxy = None
+    if use_proxy:
+        proxy = proxies[no % len(proxies)]
+
+    try:
+        app = BlumBot(token, proxy)
+        app.load_config()
+        end_time = app.run()
+        return end_time
+    except Exception as e:
+        logger.exception(f"Account {no}, Token: {token}, Error: {e}")
+        return None
+
+
 def main():
     arg = argparse.ArgumentParser()
     arg.add_argument(
@@ -595,27 +624,34 @@ def main():
 
     while True:
         list_countdown = []
-        for no, token in enumerate(datas):
-            logger.info((f"{green}account number - {white}{no + 1}"))
 
-            proxy = None
-            if use_proxy:
-                proxy = proxies[no % len(proxies)]
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            # Submit all token processing tasks to the executor
+            futures = {
+                executor.submit(process_token, no, token, proxies, use_proxy): no
+                for no, token in enumerate(datas)
+            }
 
-            try:
-                app = BlumBot(token, proxy)
-                app.load_config()
-                end_time = app.run()
-                list_countdown.append(end_time)
-            except Exception as e:
-                logger.exception(f"no: {no}, token:{token}, error: {e}")
+            # As each future completes, process the result
+            for future in as_completed(futures):
+                end_time = future.result()
+                if end_time is not None:
+                    list_countdown.append(end_time)
+
+        if not list_countdown:
+            logger.warning("All tasks failed or no valid end_time returned. Waiting for 1 second before retrying.")
+            time.sleep(1)
+            continue
 
         min_countdown = min(list_countdown)
         now = int(time.time())
         countdown_time = min_countdown - now
+
         if countdown_time <= 0:
+            logger.info("Countdown has reached zero or is negative. Restarting the loop immediately.")
             continue
-        countdown(countdown_time)
+
+        countdown(countdown_time)  # Assume this is a predefined countdown function
         logger.info('~' * 50)
 
 
