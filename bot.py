@@ -3,6 +3,7 @@ import sys
 import time
 import json
 import random
+
 from loguru import logger
 
 import requests
@@ -91,9 +92,48 @@ class BlumBot:
         self.headers["Authorization"] = f"Bearer {self.access_token}"
         return self.access_token
 
+    def validate_task(self, task):
+        answers = {
+            "What are Telegram Mini Apps?": "CRYPTOBLUM",
+            "Navigating Crypto": "HEYBLUM",
+            "Secure your Crypto!": "BEST PROJECT EVER",
+            "Forks Explained": "GO GET",
+            "Say No to Rug Pull!": "SUPERBLUM",
+            "How to Analyze Crypto?": "VALUE"
+        }
+
+        if task.get("validationType") != "KEYWORD":
+            logger.info(f'unsupported verify task {task}')
+            return
+
+        task_id = task.get("id", None)
+        validate_url = f"https://earn-domain.blum.codes/api/v1/tasks/{task_id}/validate"
+        question = task.get("title")
+        ans = answers.get(question, None)
+        if ans:
+            res = self.make_request(validate_url, self.headers, {"keyword": ans})
+            status = res.json().get("status")
+            logger.info(f"success validate task {question}, task status: {status}")
+            return status
+
+        logger.error(f"unknow question: {question}")
+        return None
+
+    def claim_task_reward(self, task):
+        task_id = task.get("id")
+        task_title = task.get("title")
+        claim_task_url = f"https://earn-domain.blum.codes/api/v1/tasks/{task_id}/claim"
+        status = self.make_request(claim_task_url, self.headers, "").json().get("status")
+        logger.info(f"claim task: {task_title} reward, status: {status}")
+        return status
+
+    def start_task(self, task):
+        start_task_url = f"https://earn-domain.blum.codes/api/v1/tasks/{task.get('id')}/start"
+        status = self.make_request(start_task_url, self.headers, "").json().get("status")
+        logger.info(f'started task: {task.get("title")}, status: {status}')
+        return status
+
     def solve(self, task: dict):
-        headers = self.base_headers.copy()
-        headers["authorization"] = f"Bearer {self.access_token}"
         ignore_tasks = [
             "39391eb2-f031-4954-bd8a-e7aecbb1f192",  # wallet connect
             "d3716390-ce5b-4c26-b82e-e45ea7eba258",  # invite task
@@ -104,47 +144,46 @@ class BlumBot:
         ]
         task_id = task.get("id")
         task_status = task.get("status")
-        start_task_url = f"https://earn-domain.blum.codes/api/v1/tasks/{task_id}/start"
-        claim_task_url = f"https://earn-domain.blum.codes/api/v1/tasks/{task_id}/claim"
         if task_id in ignore_tasks:
             return
-        if task_status == "FINISHED":
-            logger.info(f"already complete task id {task_id} !")
-            return
+        if task_status == "NOT_STARTED":
+            task_status = self.start_task(task)
+            countdown(random.randint(1, 3))
+
+        if task_status == "STARTED":
+            task_status = self.claim_task_reward(task)
+
+        if task_status == "READY_FOR_VERIFY":
+            task_status = self.validate_task(task)
+            countdown(random.randint(1, 3))
+
         if task_status == "READY_FOR_CLAIM":
-            _res = self.make_request(claim_task_url, headers, "")
-            _status = _res.json().get("status")
-            if _status == "FINISHED":
-                logger.info(f"success complete task id {task_id} !")
-                return
+            task_status = self.claim_task_reward(task)
 
-        _res = self.make_request(start_task_url, headers, "")
-        countdown(5)
-
-        _status = _res.json().get("status")
-        if _status == "STARTED":
-            _res = self.make_request(claim_task_url, headers, "")
-            _status = _res.json().get("status")
-            if _status == "FINISHED":
-                logger.info(f"success complete task id {task_id} !")
-                return
+        if task_status == "FINISHED":
+            task_title = task.get("title") or task_id
+            logger.info(f"already complete task: {task_title} !")
 
     def solve_task(self):
         url_task = "https://earn-domain.blum.codes/api/v1/tasks"
-        headers = self.base_headers.copy()
-        headers["authorization"] = f"Bearer {self.access_token}"
-        res = self.make_request(url_task, headers)
+
+        res = self.make_request(url_task, self.headers)
+
         for tasks in res.json():
             if isinstance(tasks, str):
                 logger.error(f"failed get task list !")
                 return
+
             for k in list(tasks.keys()):
                 if k != "tasks" and k != "subSections":
                     continue
                 for t in tasks.get(k):
                     if isinstance(t, dict):
+                        if t.get("title") == "New":
+                            continue
+
                         subtasks = t.get("subTasks")
-                        if subtasks is not None:
+                        if subtasks:
                             for task in subtasks:
                                 self.solve(task)
                             self.solve(t)
@@ -397,6 +436,8 @@ class BlumBot:
                     res = self.ses.get(url, headers=headers, timeout=30)
                 elif data == "":
                     res = self.ses.post(url, headers=headers, timeout=30)
+                elif isinstance(data, dict):
+                    res = self.ses.post(url, headers=headers, json=data, timeout=30)
                 else:
                     res = self.ses.post(url, headers=headers, data=data, timeout=30)
 
