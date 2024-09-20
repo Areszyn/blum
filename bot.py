@@ -308,7 +308,8 @@ class BlumBot:
             logger.info(f"{green}you have {white}{play}{green} game ticket")
             if play <= 0:
                 return
-            for i in range(play):
+
+            for i in range(min(play, 5)):
                 if self.is_expired(self.access_token):
                     return True
                 res = self.make_request(url_play, self.headers, "")
