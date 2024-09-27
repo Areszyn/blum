@@ -1,11 +1,11 @@
 {
   "interval": 3,
-  "auto_complete_task": true,
+  "auto_complete_task": false,
   "auto_play_game": true,
   "game_point": {
     "low": 150,
     "high": 250
   },
-  "join_tribe": true,
+  "join_tribe": false,
   "report_url": "http://192.168.50.88:8000/report/blum"
 }
